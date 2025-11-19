@@ -38,7 +38,6 @@ env/
 
 # Model files - too large for GitHub
 models/*.pkl
-models/*.pkl
 
 # Data files (optional - uncomment if dataset is large)
 # *.csv
