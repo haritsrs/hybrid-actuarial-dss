@@ -60,6 +60,21 @@ st.markdown("""
     .stButton>button:hover {
         background: linear-gradient(135deg, #764ba2 0%, #667eea 100%);
     }
+    .risk-low { color: #27ae60; font-weight: bold; }
+    .risk-medium { color: #f39c12; font-weight: bold; }
+    .risk-high { color: #e74c3c; font-weight: bold; }
+    .outlier-warning {
+        background: #fff3cd;
+        border: 2px solid #ffc107;
+        padding: 1rem;
+        border-radius: 8px;
+        margin: 1rem 0;
+    }
+    .tooltip-icon {
+        cursor: help;
+        color: #6c757d;
+        margin-left: 5px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -99,6 +114,34 @@ def get_feature_importance(model, feature_names, top_n=15):
         pass
     return None
 
+def get_risk_color(risk_score):
+    """Tentukan warna berdasarkan skor risiko."""
+    if risk_score < 0.33:
+        return "#27ae60", "Rendah"
+    elif risk_score < 0.67:
+        return "#f39c12", "Sedang"
+    else:
+        return "#e74c3c", "Tinggi"
+
+def calculate_percentile(value, data):
+    """Hitung percentile dari nilai dalam dataset."""
+    return (data < value).sum() / len(data) * 100
+
+def validate_inputs(age, bmi, systolic_bp, diastolic_bp):
+    """Validasi input pengguna."""
+    errors = []
+    if age < 0 or age > 120:
+        errors.append("Usia harus antara 0 dan 120 tahun")
+    if bmi < 10 or bmi > 60:
+        errors.append("BMI harus antara 10 dan 60")
+    if systolic_bp < 70 or systolic_bp > 250:
+        errors.append("Tekanan darah sistolik harus antara 70 dan 250")
+    if diastolic_bp < 40 or diastolic_bp > 150:
+        errors.append("Tekanan darah diastolik harus antara 40 dan 150")
+    if systolic_bp <= diastolic_bp:
+        errors.append("Tekanan darah sistolik harus lebih besar dari diastolik")
+    return errors
+
 def main():
     """Aplikasi Streamlit utama."""
     st.markdown('<h1 class="main-header">Sistem Prediksi Biaya Asuransi Kesehatan</h1>', unsafe_allow_html=True)
@@ -137,86 +180,100 @@ def show_simple_predictions_page(df, preprocessor, metadata, cost_model, risk_mo
     st.markdown('<div class="section-header">Prediksi Cepat</div>', unsafe_allow_html=True)
     st.markdown("Masukkan informasi dasar untuk mendapatkan prediksi biaya kesehatan, skor risiko, dan klasifikasi risiko.")
     
-    # Container utama dengan background
+    # Sidebar summary
+    with st.sidebar:
+        st.markdown("### Ringkasan Input")
+        st.markdown("_Isi form untuk melihat ringkasan_")
+    
+    # Initialize session state for form reset
+    if 'form_reset' not in st.session_state:
+        st.session_state.form_reset = False
+    
+    # Container utama
     with st.container():
-        # Informasi Demografis
-        st.markdown("### Informasi Demografis")
-        col1, col2, col3 = st.columns(3)
+        # Group form inputs with expanders
+        with st.expander("Informasi Demografis", expanded=True):
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                age = st.number_input("Usia", min_value=0, max_value=120, value=45, step=1, 
+                                     help="Usia pasien dalam tahun (0-120)")
+                sex = st.selectbox("Jenis Kelamin", ["Female", "Male", "Other"],
+                                  help="Jenis kelamin pasien")
+                region = st.selectbox("Wilayah", ["North", "Central", "West", "South", "East"],
+                                     help="Wilayah tempat tinggal")
+            with col2:
+                income = st.number_input("Pendapatan (USD)", min_value=0, value=50000, step=1000, format="%d",
+                                        help="Pendapatan tahunan dalam USD")
+                education = st.selectbox("Pendidikan", ["No HS", "HS", "Some College", "Bachelors", "Masters", "Doctorate"],
+                                        help="Tingkat pendidikan tertinggi")
+                marital_status = st.selectbox("Status Pernikahan", ["Single", "Married", "Divorced", "Widowed"],
+                                             help="Status pernikahan")
+            with col3:
+                household_size = st.number_input("Jumlah Anggota Keluarga", min_value=1, max_value=10, value=2, step=1,
+                                                help="Jumlah anggota keluarga")
+                dependents = st.number_input("Jumlah Tanggungan", min_value=0, max_value=10, value=1, step=1,
+                                            help="Jumlah tanggungan")
+                urban_rural = st.selectbox("Lokasi", ["Urban", "Suburban", "Rural"],
+                                          help="Tipe lokasi tempat tinggal")
         
-        with col1:
-            age = st.number_input("Usia", min_value=0, max_value=100, value=45, step=1)
-            sex = st.selectbox("Jenis Kelamin", ["Female", "Male", "Other"])
-            region = st.selectbox("Wilayah", ["North", "Central", "West", "South", "East"])
+        with st.expander("Informasi Kesehatan", expanded=True):
+            col4, col5, col6 = st.columns(3)
+            with col4:
+                bmi = st.slider("BMI", 10.0, 60.0, 25.0, 0.1,
+                               help="Body Mass Index (10-60)")
+                smoker = st.selectbox("Status Merokok", ["Never", "Former", "Current"],
+                                     help="Status merokok saat ini atau sebelumnya")
+                alcohol_freq = st.selectbox("Frekuensi Alkohol", ["None", "Occasional", "Weekly", "Daily"],
+                                           help="Frekuensi konsumsi alkohol")
+            with col5:
+                systolic_bp = st.slider("Tekanan Darah Sistolik", 70, 250, 120, step=1,
+                                       help="Tekanan darah sistolik (70-250 mmHg)")
+                diastolic_bp = st.slider("Tekanan Darah Diastolik", 40, 150, 80, step=1,
+                                        help="Tekanan darah diastolik (40-150 mmHg)")
+                visits_last_year = st.number_input("Kunjungan Dokter (Tahun Lalu)", min_value=0, max_value=20, value=2, step=1,
+                                                  help="Jumlah kunjungan dokter dalam tahun lalu")
+            with col6:
+                medication_count = st.number_input("Jumlah Obat", min_value=0, max_value=10, value=2, step=1,
+                                                  help="Jumlah obat yang dikonsumsi")
+                chronic_count = st.number_input("Jumlah Penyakit Kronis", min_value=0, max_value=5, value=0, step=1,
+                                               help="Jumlah penyakit kronis yang diderita")
+                hospitalizations_last_3yrs = st.number_input("Rawat Inap (3 Tahun Terakhir)", min_value=0, max_value=10, value=0, step=1,
+                                                            help="Jumlah rawat inap dalam 3 tahun terakhir")
         
-        with col2:
-            income = st.number_input("Pendapatan (USD)", min_value=0, value=50000, step=1000, format="%d")
-            education = st.selectbox("Pendidikan", ["No HS", "HS", "Some College", "Bachelors", "Masters", "Doctorate"])
-            marital_status = st.selectbox("Status Pernikahan", ["Single", "Married", "Divorced", "Widowed"])
+        with st.expander("Kondisi Kesehatan Kronis", expanded=False):
+            col7, col8, col9, col10 = st.columns(4)
+            with col7:
+                hypertension = st.checkbox("Hipertensi", help="Tekanan darah tinggi")
+                diabetes = st.checkbox("Diabetes", help="Penyakit diabetes")
+                asthma = st.checkbox("Asma", help="Penyakit asma")
+            with col8:
+                copd = st.checkbox("COPD", help="Chronic Obstructive Pulmonary Disease")
+                cardiovascular_disease = st.checkbox("Penyakit Jantung", help="Penyakit kardiovaskular")
+                cancer_history = st.checkbox("Riwayat Kanker", help="Riwayat penyakit kanker")
+            with col9:
+                kidney_disease = st.checkbox("Penyakit Ginjal", help="Penyakit ginjal")
+                liver_disease = st.checkbox("Penyakit Hati", help="Penyakit hati")
+                arthritis = st.checkbox("Arthritis", help="Radang sendi")
+            with col10:
+                mental_health = st.checkbox("Kesehatan Mental", help="Masalah kesehatan mental")
+                had_major_procedure = st.checkbox("Prosedur Besar", help="Pernah menjalani prosedur medis besar")
         
-        with col3:
-            household_size = st.number_input("Jumlah Anggota Keluarga", min_value=1, max_value=10, value=2, step=1)
-            dependents = st.number_input("Jumlah Tanggungan", min_value=0, max_value=10, value=1, step=1)
-            urban_rural = st.selectbox("Lokasi", ["Urban", "Suburban", "Rural"])
-        
-        st.markdown("---")
-        
-        # Informasi Kesehatan
-        st.markdown("### Informasi Kesehatan")
-        col4, col5, col6 = st.columns(3)
-        
-        with col4:
-            bmi = st.slider("BMI", 10.0, 50.0, 25.0, 0.1)
-            smoker = st.selectbox("Status Merokok", ["Never", "Former", "Current"])
-            alcohol_freq = st.selectbox("Frekuensi Alkohol", ["None", "Occasional", "Weekly", "Daily"])
-        
-        with col5:
-            systolic_bp = st.slider("Tekanan Darah Sistolik", 80, 200, 120, step=1)
-            diastolic_bp = st.slider("Tekanan Darah Diastolik", 50, 120, 80, step=1)
-            visits_last_year = st.number_input("Kunjungan Dokter (Tahun Lalu)", min_value=0, max_value=20, value=2, step=1)
-        
-        with col6:
-            medication_count = st.number_input("Jumlah Obat", min_value=0, max_value=10, value=2, step=1)
-            chronic_count = st.number_input("Jumlah Penyakit Kronis", min_value=0, max_value=5, value=0, step=1)
-            hospitalizations_last_3yrs = st.number_input("Rawat Inap (3 Tahun Terakhir)", min_value=0, max_value=10, value=0, step=1)
-        
-        # Kondisi Kronis - Checkbox Grid
-        st.markdown("### Kondisi Kesehatan Kronis")
-        col7, col8, col9, col10 = st.columns(4)
-        
-        with col7:
-            hypertension = st.checkbox("Hipertensi")
-            diabetes = st.checkbox("Diabetes")
-            asthma = st.checkbox("Asma")
-        
-        with col8:
-            copd = st.checkbox("COPD")
-            cardiovascular_disease = st.checkbox("Penyakit Jantung")
-            cancer_history = st.checkbox("Riwayat Kanker")
-        
-        with col9:
-            kidney_disease = st.checkbox("Penyakit Ginjal")
-            liver_disease = st.checkbox("Penyakit Hati")
-            arthritis = st.checkbox("Arthritis")
-        
-        with col10:
-            mental_health = st.checkbox("Kesehatan Mental")
-            had_major_procedure = st.checkbox("Prosedur Besar")
-        
-        st.markdown("---")
-        
-        # Informasi Asuransi
-        st.markdown("### Informasi Asuransi")
-        col11, col12 = st.columns(2)
-        
-        with col11:
-            plan_type = st.selectbox("Tipe Plan", ["HMO", "PPO", "POS", "EPO"])
-            network_tier = st.selectbox("Tier Jaringan", ["Bronze", "Silver", "Gold", "Platinum"])
-            deductible = st.selectbox("Deductible", [500, 1000, 2000, 5000])
-        
-        with col12:
-            copay = st.selectbox("Copay", [10, 20, 30, 50])
-            monthly_premium = st.number_input("Premi Bulanan (USD)", min_value=0.0, value=500.0, step=10.0)
-            provider_quality = st.slider("Kualitas Provider", 1.0, 5.0, 3.5, 0.1)
+        with st.expander("Informasi Asuransi", expanded=False):
+            col11, col12 = st.columns(2)
+            with col11:
+                plan_type = st.selectbox("Tipe Plan", ["HMO", "PPO", "POS", "EPO"],
+                                        help="Tipe rencana asuransi")
+                network_tier = st.selectbox("Tier Jaringan", ["Bronze", "Silver", "Gold", "Platinum"],
+                                           help="Tingkat jaringan asuransi")
+                deductible = st.selectbox("Deductible", [500, 1000, 2000, 5000],
+                                         help="Jumlah deductible")
+            with col12:
+                copay = st.selectbox("Copay", [10, 20, 30, 50],
+                                    help="Jumlah copay")
+                monthly_premium = st.number_input("Premi Bulanan (USD)", min_value=0.0, value=500.0, step=10.0,
+                                                 help="Premi asuransi bulanan")
+                provider_quality = st.slider("Kualitas Provider", 1.0, 5.0, 3.5, 0.1,
+                                            help="Rating kualitas provider (1-5)")
         
         # Nilai default untuk kolom yang tidak ditampilkan
         employment_status = "Employed"
@@ -237,75 +294,115 @@ def show_simple_predictions_page(df, preprocessor, metadata, cost_model, risk_mo
         
         st.markdown("---")
         
-        # Tombol Prediksi
-        if st.button("Lakukan Prediksi", type="primary", use_container_width=True):
-            # Buat DataFrame input
-            input_data = pd.DataFrame({
-                'age': [age],
-                'sex': [sex],
-                'region': [region],
-                'urban_rural': [urban_rural],
-                'income': [income],
-                'education': [education],
-                'marital_status': [marital_status],
-                'employment_status': [employment_status],
-                'household_size': [household_size],
-                'dependents': [dependents],
-                'bmi': [bmi],
-                'smoker': [smoker],
-                'alcohol_freq': [alcohol_freq if alcohol_freq != "None" else np.nan],
-                'visits_last_year': [visits_last_year],
-                'hospitalizations_last_3yrs': [hospitalizations_last_3yrs],
-                'days_hospitalized_last_3yrs': [days_hospitalized_last_3yrs],
-                'medication_count': [medication_count],
-                'systolic_bp': [systolic_bp],
-                'diastolic_bp': [diastolic_bp],
-                'ldl': [ldl],
-                'hba1c': [hba1c],
-                'plan_type': [plan_type],
-                'network_tier': [network_tier],
-                'deductible': [deductible],
-                'copay': [copay],
-                'policy_term_years': [policy_term_years],
-                'policy_changes_last_2yrs': [policy_changes_last_2yrs],
-                'provider_quality': [provider_quality],
-                'annual_premium': [annual_premium],
-                'monthly_premium': [monthly_premium],
-                'claims_count': [claims_count],
-                'avg_claim_amount': [avg_claim_amount],
-                'total_claims_paid': [total_claims_paid],
-                'chronic_count': [chronic_count],
-                'hypertension': [1 if hypertension else 0],
-                'diabetes': [1 if diabetes else 0],
-                'asthma': [1 if asthma else 0],
-                'copd': [1 if copd else 0],
-                'cardiovascular_disease': [1 if cardiovascular_disease else 0],
-                'cancer_history': [1 if cancer_history else 0],
-                'kidney_disease': [1 if kidney_disease else 0],
-                'liver_disease': [1 if liver_disease else 0],
-                'arthritis': [1 if arthritis else 0],
-                'mental_health': [1 if mental_health else 0],
-                'proc_imaging_count': [proc_imaging_count],
-                'proc_surgery_count': [proc_surgery_count],
-                'proc_physio_count': [proc_physio_count],
-                'proc_consult_count': [proc_consult_count],
-                'proc_lab_count': [proc_lab_count],
-                'had_major_procedure': [1 if had_major_procedure else 0]
-            })
+        # Update sidebar summary
+        with st.sidebar:
+            st.markdown("### Ringkasan Input")
+            st.write(f"**Usia:** {age} tahun")
+            st.write(f"**BMI:** {bmi:.1f}")
+            st.write(f"**Penyakit Kronis:** {chronic_count}")
+            st.write(f"**Tier Asuransi:** {network_tier}")
+            st.write(f"**Premi Bulanan:** ${monthly_premium:,.0f}")
+        
+        # Buttons
+        col_btn1, col_btn2 = st.columns([3, 1])
+        with col_btn1:
+            predict_button = st.button("Lakukan Prediksi", type="primary", use_container_width=True)
+        with col_btn2:
+            if st.button("Reset Form", use_container_width=True):
+                st.session_state.form_reset = True
+                st.rerun()
+        
+        if predict_button:
+            # Validasi input
+            validation_errors = validate_inputs(age, bmi, systolic_bp, diastolic_bp)
+            if validation_errors:
+                for error in validation_errors:
+                    st.error(error)
+                st.stop()
             
-            # Preprocess
-            feature_cols = metadata['numerical_cols'] + metadata['categorical_cols']
-            X_input = preprocessor.transform(input_data[feature_cols])
-            
-            # Prediksi
-            cost_pred = cost_model.predict(X_input)[0]
-            risk_pred = risk_model.predict(X_input)[0]
-            high_risk_pred = high_risk_model.predict(X_input)[0]
-            high_risk_proba = high_risk_model.predict_proba(X_input)[0][1]
+            # Loading spinner
+            with st.spinner("Memproses prediksi..."):
+                # Buat DataFrame input
+                input_data = pd.DataFrame({
+                    'age': [age],
+                    'sex': [sex],
+                    'region': [region],
+                    'urban_rural': [urban_rural],
+                    'income': [income],
+                    'education': [education],
+                    'marital_status': [marital_status],
+                    'employment_status': [employment_status],
+                    'household_size': [household_size],
+                    'dependents': [dependents],
+                    'bmi': [bmi],
+                    'smoker': [smoker],
+                    'alcohol_freq': [alcohol_freq if alcohol_freq != "None" else np.nan],
+                    'visits_last_year': [visits_last_year],
+                    'hospitalizations_last_3yrs': [hospitalizations_last_3yrs],
+                    'days_hospitalized_last_3yrs': [days_hospitalized_last_3yrs],
+                    'medication_count': [medication_count],
+                    'systolic_bp': [systolic_bp],
+                    'diastolic_bp': [diastolic_bp],
+                    'ldl': [ldl],
+                    'hba1c': [hba1c],
+                    'plan_type': [plan_type],
+                    'network_tier': [network_tier],
+                    'deductible': [deductible],
+                    'copay': [copay],
+                    'policy_term_years': [policy_term_years],
+                    'policy_changes_last_2yrs': [policy_changes_last_2yrs],
+                    'provider_quality': [provider_quality],
+                    'annual_premium': [annual_premium],
+                    'monthly_premium': [monthly_premium],
+                    'claims_count': [claims_count],
+                    'avg_claim_amount': [avg_claim_amount],
+                    'total_claims_paid': [total_claims_paid],
+                    'chronic_count': [chronic_count],
+                    'hypertension': [1 if hypertension else 0],
+                    'diabetes': [1 if diabetes else 0],
+                    'asthma': [1 if asthma else 0],
+                    'copd': [1 if copd else 0],
+                    'cardiovascular_disease': [1 if cardiovascular_disease else 0],
+                    'cancer_history': [1 if cancer_history else 0],
+                    'kidney_disease': [1 if kidney_disease else 0],
+                    'liver_disease': [1 if liver_disease else 0],
+                    'arthritis': [1 if arthritis else 0],
+                    'mental_health': [1 if mental_health else 0],
+                    'proc_imaging_count': [proc_imaging_count],
+                    'proc_surgery_count': [proc_surgery_count],
+                    'proc_physio_count': [proc_physio_count],
+                    'proc_consult_count': [proc_consult_count],
+                    'proc_lab_count': [proc_lab_count],
+                    'had_major_procedure': [1 if had_major_procedure else 0]
+                })
+                
+                # Preprocess
+                feature_cols = metadata['numerical_cols'] + metadata['categorical_cols']
+                X_input = preprocessor.transform(input_data[feature_cols])
+                
+                # Prediksi
+                cost_pred = cost_model.predict(X_input)[0]
+                risk_pred = risk_model.predict(X_input)[0]
+                high_risk_pred = high_risk_model.predict(X_input)[0]
+                high_risk_proba = high_risk_model.predict_proba(X_input)[0][1]
             
             # Tampilkan hasil
             st.markdown("---")
             st.markdown('<div class="section-header">Hasil Prediksi</div>', unsafe_allow_html=True)
+            
+            # Hitung percentile
+            cost_percentile = calculate_percentile(cost_pred, df['annual_medical_cost'])
+            risk_color_code, risk_level = get_risk_color(risk_pred)
+            
+            # Outlier warning
+            is_outlier = cost_pred > 100000
+            if is_outlier:
+                st.markdown(f"""
+                <div class="outlier-warning">
+                    <strong>Peringatan:</strong> Prediksi biaya medis (${cost_pred:,.2f}) sangat tinggi dan termasuk outlier. 
+                    Disarankan untuk konsultasi lebih lanjut dengan ahli medis.
+                </div>
+                """, unsafe_allow_html=True)
             
             # Kartu hasil dengan desain modern
             col_result1, col_result2, col_result3 = st.columns(3)
@@ -315,17 +412,20 @@ def show_simple_predictions_page(df, preprocessor, metadata, cost_model, risk_mo
                 <div class="prediction-result">
                     <h3 style="color: #1f77b4; margin-bottom: 0.5rem;">Biaya Medis Tahunan</h3>
                     <h2 style="color: #2c3e50; margin: 0;">${cost_pred:,.2f}</h2>
+                    <p style="color: #7f8c8d; font-size: 0.9rem; margin-top: 0.5rem;">Percentile: {cost_percentile:.1f}%</p>
                 </div>
                 """, unsafe_allow_html=True)
             
             with col_result2:
+                # Progress bar untuk risk score
                 st.markdown(f"""
                 <div class="prediction-result">
                     <h3 style="color: #1f77b4; margin-bottom: 0.5rem;">Skor Risiko</h3>
-                    <h2 style="color: #2c3e50; margin: 0;">{risk_pred:.4f}</h2>
-                    <p style="color: #7f8c8d; font-size: 0.9rem; margin-top: 0.5rem;">Rentang: 0.0 - 1.0</p>
+                    <h2 style="color: {risk_color_code}; margin: 0;">{risk_pred:.4f}</h2>
+                    <p style="color: #7f8c8d; font-size: 0.9rem; margin-top: 0.5rem;">Level: {risk_level}</p>
                 </div>
                 """, unsafe_allow_html=True)
+                st.progress(risk_pred, text=f"Skor Risiko: {risk_pred:.1%}")
             
             with col_result3:
                 risk_status = "Risiko Tinggi" if high_risk_pred == 1 else "Risiko Rendah"
@@ -334,17 +434,83 @@ def show_simple_predictions_page(df, preprocessor, metadata, cost_model, risk_mo
                 <div class="prediction-result">
                     <h3 style="color: #1f77b4; margin-bottom: 0.5rem;">Klasifikasi Risiko</h3>
                     <h2 style="color: {risk_color}; margin: 0;">{risk_status}</h2>
-                    <p style="color: #7f8c8d; font-size: 0.9rem; margin-top: 0.5rem;">Tingkat Keyakinan: {high_risk_proba:.1%}</p>
+                    <p style="color: #7f8c8d; font-size: 0.9rem; margin-top: 0.5rem;">Keyakinan: {high_risk_proba:.1%}</p>
                 </div>
                 """, unsafe_allow_html=True)
             
-            # Interpretasi
-            st.info(f"""
-            **Interpretasi Hasil:**
-            - **Biaya Medis Tahunan**: ${cost_pred:,.2f} diperkirakan akan dikeluarkan untuk perawatan kesehatan dalam satu tahun.
-            - **Skor Risiko**: {risk_pred:.4f} menunjukkan tingkat risiko medis (semakin tinggi semakin berisiko).
-            - **Klasifikasi**: Pasien diklasifikasikan sebagai **{risk_status}** dengan tingkat keyakinan {high_risk_proba:.1%}.
-            """)
+            # Interpretasi dengan bullet points dan icons
+            st.markdown("---")
+            st.markdown("### Interpretasi Hasil")
+            col_int1, col_int2 = st.columns(2)
+            
+            with col_int1:
+                st.markdown(f"""
+                - **Biaya Medis Tahunan:** ${cost_pred:,.2f}
+                - **Percentile Dataset:** {cost_percentile:.1f}% (lebih tinggi dari {cost_percentile:.1f}% pasien)
+                - **Skor Risiko:** {risk_pred:.4f} (Level: {risk_level})
+                """)
+            
+            with col_int2:
+                st.markdown(f"""
+                - **Klasifikasi:** {risk_status} (Keyakinan: {high_risk_proba:.1%})
+                - **Rekomendasi:** {'Konsultasi medis segera disarankan' if high_risk_pred == 1 else 'Pemantauan rutin disarankan'}
+                """)
+            
+            # Feature importance explanation
+            with st.expander("Penjelasan Prediksi (Feature Importance)", expanded=False):
+                importance = get_feature_importance(cost_model, metadata['feature_names'], top_n=10)
+                if importance:
+                    st.markdown("**10 Faktor Paling Mempengaruhi Prediksi Biaya:**")
+                    for i, (feat, imp) in enumerate(zip(importance['features'], importance['importances']), 1):
+                        st.write(f"{i}. {feat}: {imp:.4f}")
+                else:
+                    st.info("Feature importance tidak tersedia untuk model ini.")
+            
+            # Download button
+            st.markdown("---")
+            col_dl1, col_dl2 = st.columns(2)
+            
+            # Prepare data for download
+            prediction_data = pd.DataFrame({
+                'Metrik': ['Biaya Medis Tahunan', 'Skor Risiko', 'Klasifikasi Risiko', 'Percentile Biaya'],
+                'Nilai': [f"${cost_pred:,.2f}", f"{risk_pred:.4f}", risk_status, f"{cost_percentile:.1f}%"]
+            })
+            csv_data = prediction_data.to_csv(index=False).encode('utf-8')
+            
+            with col_dl1:
+                st.download_button(
+                    label="Unduh Hasil (CSV)",
+                    data=csv_data,
+                    file_name=f"prediksi_{age}_{sex}_{int(cost_pred)}.csv",
+                    mime="text/csv"
+                )
+            
+            with col_dl2:
+                # Create a simple text report for download
+                report_text = f"""
+LAPORAN PREDIKSI BIAYA ASURANSI KESEHATAN
+==========================================
+
+INFORMASI PASIEN:
+- Usia: {age} tahun
+- Jenis Kelamin: {sex}
+- BMI: {bmi:.1f}
+- Jumlah Penyakit Kronis: {chronic_count}
+
+HASIL PREDIKSI:
+- Biaya Medis Tahunan: ${cost_pred:,.2f}
+- Percentile Dataset: {cost_percentile:.1f}%
+- Skor Risiko: {risk_pred:.4f} (Level: {risk_level})
+- Klasifikasi: {risk_status} (Keyakinan: {high_risk_proba:.1%})
+
+Tanggal: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}
+"""
+                st.download_button(
+                    label="Unduh Laporan (TXT)",
+                    data=report_text.encode('utf-8'),
+                    file_name=f"laporan_prediksi_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                    mime="text/plain"
+                )
 
 def show_detailed_predictions_page(df, preprocessor, metadata, cost_model, risk_model, high_risk_model):
     """Tampilkan halaman prediksi detail dengan semua fitur."""
