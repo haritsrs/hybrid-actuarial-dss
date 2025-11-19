@@ -36,8 +36,9 @@ env/
 # Jupyter Notebook
 .ipynb_checkpoints
 
-# Model files are tracked with Git LFS (see .gitattributes)
-# models/*.pkl
+# Model files - too large for GitHub
+models/*.pkl
+models/*.pkl
 
 # Data files (optional - uncomment if dataset is large)
 # *.csv
