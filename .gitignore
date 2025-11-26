@@ -36,8 +36,8 @@ env/
 # Jupyter Notebook
 .ipynb_checkpoints
 
-# Model files - too large for GitHub
-models/*.pkl
+# Model files - Allow all .pkl files except model_metrics.pkl (too large, not needed for app)
+models/model_metrics.pkl
 
 # Data files (optional - uncomment if dataset is large)
 # *.csv

@@ -58,11 +58,43 @@ st.markdown("""
 @st.cache_data
 def load_data():
     """Memuat dataset asuransi kesehatan."""
+    import os
+    if not os.path.exists('medical_insurance.csv'):
+        raise FileNotFoundError(
+            "File 'medical_insurance.csv' tidak ditemukan. "
+            "Pastikan file dataset ada di root project."
+        )
     return pd.read_csv('medical_insurance.csv')
 
 @st.cache_resource
 def load_models():
     """Memuat model yang sudah dilatih dan preprocessor."""
+    import os
+    
+    # Check if models directory exists
+    if not os.path.exists('models'):
+        raise FileNotFoundError(
+            "Directory 'models' tidak ditemukan. "
+            "Pastikan folder 'models' ada di root project dan berisi file-file model (.pkl)."
+        )
+    
+    # List of required model files
+    required_files = [
+        'models/preprocessor.pkl',
+        'models/preprocessor_metadata.pkl',
+        'models/cost_model.pkl',
+        'models/risk_score_model.pkl',
+        'models/high_risk_model.pkl'
+    ]
+    
+    # Check if all required files exist
+    missing_files = [f for f in required_files if not os.path.exists(f)]
+    if missing_files:
+        raise FileNotFoundError(
+            f"File model tidak ditemukan: {', '.join(missing_files)}\n"
+            "Pastikan semua file model sudah di-commit ke repository untuk deployment Streamlit Cloud."
+        )
+    
     preprocessor = joblib.load('models/preprocessor.pkl')
     metadata = joblib.load('models/preprocessor_metadata.pkl')
     cost_model = joblib.load('models/cost_model.pkl')
